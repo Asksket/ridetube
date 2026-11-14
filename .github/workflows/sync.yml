@@ -1,0 +1,54 @@
+# Each night: RideTube as JustAnotherPU publishes it, with the Close button (sync/close.patch), built into the
+# close-video branch the MGU Store installs from. Nothing new upstream: nothing pushed. Close no longer applies
+# (RideTube changed the same lines): the run fails, GitHub sends an email, and close-video stays as it was.
+name: Sync with RideTube
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: sync
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: The sync files
+        uses: actions/checkout@v4
+        with:
+          path: fork
+      - name: RideTube with the Close button
+        run: |
+          set -eu
+          git clone --quiet https://github.com/JustAnotherPU/RideTube.git build
+          cd build
+          if git apply --check --reverse ../fork/sync/close.patch 2>/dev/null; then
+            echo "RideTube has the Close button already"
+          else
+            git apply --3way ../fork/sync/close.patch
+          fi
+          python3 ../fork/sync/finish.py ../fork/sync .
+      - name: Tests
+        working-directory: build
+        run: node kit/tools/test_ridetube.js
+      - name: Push close-video
+        working-directory: build
+        env:
+          TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          up=$(git rev-parse --short HEAD)
+          version=$(python3 -c "import json; print(json.load(open('apps/jap_ridetube/app.json'))['version'])")
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -q -B close-video
+          git add -A
+          git commit -q -m "RideTube $up with the Close button: app $version"
+          git remote add fork "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          if git fetch -q fork close-video && git diff --quiet FETCH_HEAD HEAD; then
+            echo "close-video is up to date (app $version)"
+            exit 0
+          fi
+          git push -q -f fork HEAD:close-video
+          echo "close-video: app $version"
